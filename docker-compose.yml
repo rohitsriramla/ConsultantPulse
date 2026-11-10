@@ -1,0 +1,83 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: consultantpulse-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: devtimer_user
+      POSTGRES_PASSWORD: devtimer_secret_password
+      POSTGRES_DB: devtimer_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U devtimer_user -d devtimer_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: consultantpulse-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: devtimer-backend
+    restart: unless-stopped
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ConnectionStrings__DefaultConnection=Host=postgres;Port=5432;Database=devtimer_db;Username=devtimer_user;Password=devtimer_secret_password
+      - Redis__ConnectionString=redis:6379
+      - Jwt__Key=super_secret_consultant_jwt_devtimer_key_1234567890!
+      - Jwt__Issuer=DevTimerApi
+      - Jwt__Audience=DevTimerClient
+    ports:
+      - "5000:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: ./worker
+      dockerfile: Dockerfile
+    container_name: devtimer-worker
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=postgresql://devtimer_user:devtimer_secret_password@postgres:5432/devtimer_db
+      - OPENAI_API_KEY=your_openai_api_key_here
+    volumes:
+      - ./worker/invoices:/app/invoices
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: devtimer-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:
